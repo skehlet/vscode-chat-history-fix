@@ -1,19 +1,19 @@
 # VS Code Chat History Fix
 
-**Lost your VS Code chat history?** This tool can restore it! 🔧
+A utility to repair corrupted chat session indices in VS Code's workspace storage.
 
-## Quick Fix (Recommended)
+> **Problem:** VS Code chat sessions become invisible due to index corruption in `state.vscdb`, despite session data files remaining intact on disk.  
+> **Solution:** This tool scans session files and rebuilds the database index to restore visibility of all chat sessions.
 
-### Step 1: Preview What Will Be Restored
+## Quick Start
+
+### Step 1: Preview Changes
 
 ```bash
 python3 fix_chat_session_index_v3.py --dry-run
 ```
 
-This shows you exactly which sessions will be restored **without making any changes**. You'll see:
-- Which workspaces have issues
-- How many sessions will be restored
-- Preview of session titles and dates
+Displays affected workspaces and sessions to be restored without modifying any files.
 
 ### Step 2: Apply the Fix
 
@@ -25,23 +25,60 @@ python3 fix_chat_session_index_v3.py
 
 ### Step 3: Verify
 
-Reopen VS Code and check the Chat view - your sessions should be back!
+Restart VS Code and verify sessions appear in the Chat view.
 
 ---
 
-## What Happened?
+## Technical Overview
 
-Your chat sessions aren't actually lost - they just became invisible due to a corrupted index in VS Code's database. The session files still exist on disk, but VS Code doesn't know to load them.
+### Storage Architecture
 
-**This tool rebuilds the index so VS Code can find your sessions again.**
+VS Code's core chat service (not the GitHub Copilot extension) manages regular chat sessions using the following structure:
+
+```
+~/.config/Code/User/workspaceStorage/<workspace-id>/
+├── state.vscdb                    # SQLite database
+│   └── chat.ChatSessionStore.index  # Index of all sessions
+└── chatSessions/
+    ├── session-1.json             # Your actual chat data
+    ├── session-2.json
+    └── session-3.json
+```
+
+**Session Creation Process:**
+1. Full conversation stored as JSON in `chatSessions/`
+2. Index entry added to `state.vscdb` with metadata (title, timestamp, location)
+
+**Session Restoration Process:**
+- On startup, VS Code reads `chat.ChatSessionStore.index` from `state.vscdb` to determine which sessions to load
+
+### Root Cause
+
+The index in `state.vscdb` can become corrupted or out of sync with actual session files, causing:
+- Session data files remain intact on disk
+- Index missing entries for existing sessions
+- VS Code unable to discover sessions during restoration
+
+**Example scenario:**
+- Session files on disk: 13
+- Index entries in database: 1
+- Sessions visible in UI: 1
+
+### Repair Process
+
+The tool performs the following operations:
+1. Scans `chatSessions/` directory for all session JSON files
+2. Extracts metadata from each session file
+3. Rebuilds `chat.ChatSessionStore.index` in `state.vscdb`
+4. Creates timestamped backup before modifications
 
 ---
 
-## Which Script to Use?
+## Available Scripts
 
-### Option 1: Automatic Fix (Easiest) ⭐
+### Option 1: Automatic Repair (Recommended)
 
-**`fix_chat_session_index_v3.py`** - Finds and fixes all corrupted workspaces automatically.
+`fix_chat_session_index_v3.py` - Automatically detects and repairs all affected workspaces.
 
 ```bash
 # See what would be fixed (safe preview)
@@ -54,9 +91,9 @@ python3 fix_chat_session_index_v3.py
 python3 fix_chat_session_index_v3.py --yes
 ```
 
-### Option 2: Manual Selection
+### Option 2: Manual Workspace Selection
 
-**`fix_chat_session_index_v2.py`** - Choose which workspace to fix.
+`fix_chat_session_index_v2.py` - Repair specific workspace by ID.
 
 ```bash
 # List your workspaces
@@ -66,7 +103,7 @@ python3 fix_chat_session_index_v2.py
 python3 fix_chat_session_index_v2.py <workspace_id>
 ```
 
-This script supports the same safety flags as v3:
+Supports the same options as v3:
 
 ```bash
 # Preview changes without writing the DB
@@ -81,31 +118,24 @@ python3 fix_chat_session_index_v2.py <workspace_id> --remove-orphans
 
 ---
 
-## Important Notes
+## Important Considerations
 
-### ⚠️ Close VS Code First!
+### Prerequisites
 
-Always close VS Code **completely** before running these scripts. Otherwise, VS Code might overwrite your fixes.
+- Close VS Code completely before running repair scripts to prevent database locks and conflicts
 
-### ✅ Safe to Use
+### Safety Features
 
-- Creates automatic backups before making changes
-- Only modifies the index, never deletes your session data
-- Can preview changes with `--dry-run` mode
+- Automatic backup creation before any modifications
+- Read-only preview mode via `--dry-run` flag
+- Index-only modifications - session data files remain untouched
+- Zero data loss risk
 
-### 📋 Requirements
+### System Requirements
 
-- Python 3.6 or newer
-- No installation needed - uses only Python standard library
-
----
-
-## How It Works
-
-1. **Scans** your VS Code workspace storage for session files
-2. **Detects** sessions that exist on disk but are missing from the index
-3. **Rebuilds** the index to include all your sessions
-4. **Backs up** the database before making any changes
+- Python 3.6+
+- No external dependencies (uses Python standard library only)
+- Cross-platform: Linux, macOS, Windows
 
 ---
 
@@ -164,34 +194,73 @@ To apply these changes, run without --dry-run:
 
 ## Troubleshooting
 
-**Script says "No workspaces found"**
-- Make sure you've used VS Code Chat before
-- Check that `~/.config/Code/User/workspaceStorage/` exists
+**No workspaces found**
+- Verify VS Code Chat has been used previously
+- Confirm workspace storage directory exists: `~/.config/Code/User/workspaceStorage/` (Linux/macOS) or `%APPDATA%\Code\User\workspaceStorage\` (Windows)
 
-**Sessions still not showing**
-- Ensure you closed VS Code before running the script
-- Try reloading VS Code window (Ctrl+Shift+P → "Reload Window")
-- Check the backup was created successfully
+**Sessions not restored after repair**
+- Confirm VS Code was completely closed before running the script
+- Reload VS Code window: `Ctrl+Shift+P` → "Reload Window"
+- Verify backup file creation was successful
+- Check workspace ID matches current project
 
-**Want to undo the fix?**
-- Find the backup file: `state.vscdb.backup.TIMESTAMP`
-- Copy it back to `state.vscdb`
+**Rollback procedure**
+- Locate backup: `state.vscdb.backup.<timestamp>`
+- Replace current database: `cp state.vscdb.backup.<timestamp> state.vscdb`
+
+---
+
+## Upstream Issue
+
+This is a VS Code core bug, not a GitHub Copilot extension issue. The Copilot extension manages only specialized sessions (Claude Code, Copilot CLI, PR sessions) - regular chat session restoration is handled by VS Code's core chat service.
+
+**Analysis:**
+- `chat.ChatSessionStore.index` in `state.vscdb` becomes desynchronized from session files
+- Write operations succeed but read/restoration logic fails
+- Likely race condition in VS Code's chat service initialization
+
+### Reporting
+
+- Technical details: See `VSCODE_CORE_BUG_REPORT.md`
+- File issues: https://github.com/microsoft/vscode/issues
 
 ---
 
-## Report the Bug
+## FAQ
 
-This is a VS Code core issue, not an extension bug. Help get it fixed permanently:
+**Can sessions be transferred between workspaces?**  
+Yes. Session files are standard JSON. Copy files between workspace `chatSessions/` directories, then run the repair script to update the index.
 
-1. See `VSCODE_CORE_BUG_REPORT.md` for details
-2. File at: https://github.com/microsoft/vscode/issues
+**Folder mode vs workspace file (.code-workspace) storage?**  
+Different workspace modes use distinct storage locations. Chat histories exist in both locations but are isolated by workspace context.
+
+**Does this tool delete any data?**  
+No. Only the database index is modified. Session data files are read-only operations.
+
+**What are orphaned index entries?**  
+Index references to non-existent session files. Retained by default for safety (e.g., temporarily unmounted drives). Use `--remove-orphans` to clean up.
 
 ---
+
+## Use Cases
+
+Addresses the following symptoms:
+- Chat history disappears after VS Code restart
+- Previously visible sessions no longer appear in Chat view
+- Session count mismatch between filesystem and UI
+- Workspace migration with incomplete session restoration
+
+## Contributing
+
+Bug reports and improvements welcome via issues or pull requests.
 
 ## License
 
 MIT
 
----
+## Support
 
-**Need help?** Open an issue with details about your problem.
+For issues, provide:
+- OS and VS Code version
+- Output from `--dry-run` mode
+- Complete error messages and stack traces
