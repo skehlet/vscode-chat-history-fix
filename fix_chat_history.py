@@ -56,6 +56,7 @@ import json
 import sqlite3
 import shutil
 import sys
+import platform
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Set, Optional
@@ -74,6 +75,18 @@ def extract_project_name(folder_path: Optional[str]) -> Optional[str]:
         return Path(folder_path).name
     except:
         return None
+
+def get_vscode_storage_root() -> Path:
+    """Get the VS Code workspace storage directory for the current platform."""
+    home = Path.home()
+    system = platform.system()
+    
+    if system == "Darwin":  # macOS
+        return home / "Library/Application Support/Code/User/workspaceStorage"
+    elif system == "Windows":
+        return home / "AppData/Roaming/Code/User/workspaceStorage"
+    else:  # Linux and others
+        return home / ".config/Code/User/workspaceStorage"
 
 def folders_match(folder1: Optional[str], folder2: Optional[str]) -> bool:
     """Check if two workspace folders likely refer to the same project."""
@@ -182,7 +195,7 @@ class WorkspaceInfo:
 
 def scan_workspaces() -> List[WorkspaceInfo]:
     """Scan all VS Code workspaces and return their info."""
-    storage_root = Path.home() / ".config/Code/User/workspaceStorage"
+    storage_root = get_vscode_storage_root()
 
     if not storage_root.exists():
         return []
@@ -394,7 +407,7 @@ def list_workspaces_mode():
 
 def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bool, recover_orphans: bool, auto_yes: bool):
     """Repair a specific workspace by ID."""
-    storage_root = Path.home() / ".config/Code/User/workspaceStorage"
+    storage_root = get_vscode_storage_root()
     workspace_path = storage_root / workspace_id
 
     if not workspace_path.exists():
